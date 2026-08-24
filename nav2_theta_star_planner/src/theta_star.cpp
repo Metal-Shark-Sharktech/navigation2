@@ -130,8 +130,9 @@ void ThetaStar::setNeighbors(const tree_node * curr_data)
       continue;
     }
 
-    g_cost = curr_data->g + getEuclideanCost(curr_data->x, curr_data->y, mx, my) +
-      getTraversalCost(mx, my);
+    // Charged per unit distance. moves[0..3] are axial, moves[4..7] diagonal.
+    const double step_length = i < 4 ? 1.0 : M_SQRT2;
+    g_cost = curr_data->g + (w_euc_cost_ + getTraversalCost(mx, my)) * step_length;
 
     m_id = getIndex(mx, my);
 
@@ -186,6 +187,7 @@ bool ThetaStar::losCheck(
   double & sl_cost) const
 {
   sl_cost = 0;
+  int n_charges = 0;
 
   int cx, cy;
   int dy = abs(y1 - y0), dx = abs(x1 - x0), f = 0;
@@ -202,16 +204,18 @@ bool ThetaStar::losCheck(
     while (cx != x1) {
       f += dy;
       if (f >= dx) {
-        if (!isSafe(cx + u_x, cy + u_y, sl_cost)) {
+        if (!isSafe(cx + u_x, cy + u_y, sl_cost, n_charges)) {
           return false;
         }
         cy += sy;
         f -= dx;
       }
-      if (f != 0 && !isSafe(cx + u_x, cy + u_y, sl_cost)) {
+      if (f != 0 && !isSafe(cx + u_x, cy + u_y, sl_cost, n_charges)) {
         return false;
       }
-      if (dy == 0 && !isSafe(cx + u_x, cy, sl_cost) && !isSafe(cx + u_x, cy - 1, sl_cost)) {
+      if (dy == 0 && !isSafe(cx + u_x, cy, sl_cost, n_charges) &&
+        !isSafe(cx + u_x, cy - 1, sl_cost, n_charges))
+      {
         return false;
       }
       cx += sx;
@@ -220,20 +224,28 @@ bool ThetaStar::losCheck(
     while (cy != y1) {
       f = f + dx;
       if (f >= dy) {
-        if (!isSafe(cx + u_x, cy + u_y, sl_cost)) {
+        if (!isSafe(cx + u_x, cy + u_y, sl_cost, n_charges)) {
           return false;
         }
         cx += sx;
         f -= dy;
       }
-      if (f != 0 && !isSafe(cx + u_x, cy + u_y, sl_cost)) {
+      if (f != 0 && !isSafe(cx + u_x, cy + u_y, sl_cost, n_charges)) {
         return false;
       }
-      if (dx == 0 && !isSafe(cx, cy + u_y, sl_cost) && !isSafe(cx - 1, cy + u_y, sl_cost)) {
+      if (dx == 0 && !isSafe(cx, cy + u_y, sl_cost, n_charges) &&
+        !isSafe(cx - 1, cy + u_y, sl_cost, n_charges))
+      {
         return false;
       }
       cy += sy;
     }
+  }
+  // Bresenham charges once per cell visited, which sums to the staircase length rather than the
+  // length of the line. Normalise to the line so the traversal term is charged over the same
+  // distance as the euclidean term, and does not depend on the direction of travel.
+  if (n_charges > 0) {
+    sl_cost *= std::hypot(dx, dy) / n_charges;
   }
   return true;
 }
