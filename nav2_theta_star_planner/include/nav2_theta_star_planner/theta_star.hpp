@@ -192,9 +192,11 @@ protected:
   /**
    * @brief it is an overloaded function to ease the cost calculations while performing the LOS check
    * @param cost denotes the total straight line traversal cost; it adds the traversal cost for the node (cx, cy) at every instance; it is also being returned
-   * @return false if the traversal cost is greater than the MAX_NON_OBSTACLE_COST and true otherwise
+   * @param n_charges counts the cells added into cost, so the caller can normalise the sum to the
+   *          length of the line rather than the length of the Bresenham staircase
+   * @return true if the cell may be traversed, false otherwise
    */
-  bool isSafe(const int & cx, const int & cy, double & cost) const
+  bool isSafe(const int & cx, const int & cy, double & cost, int & n_charges) const
   {
     double curr_cost = getCost(cx, cy);
     if ((costmap_->getCost(cx, cy) == UNKNOWN_COST && allow_unknown_) ||
@@ -205,6 +207,7 @@ protected:
       }
       cost += w_traversal_cost_ * curr_cost * curr_cost / MAX_NON_OBSTACLE_COST /
         MAX_NON_OBSTACLE_COST;
+      n_charges++;
       return true;
     } else {
       return false;
