@@ -48,6 +48,9 @@ where the mean is taken over the cells the Bresenham trace from 'par' to 'neigh'
 sampled average rather than an exact integral: a cell the line clips but the trace steps past is
 not charged.
 
+Free space (a costmap cost of 0) carries no traversal cost at all, so the length of a path is
+charged solely through the euclidean term.
+
 Both terms are charged per unit distance rather than once per cell visited, so neither depends on
 the direction of travel relative to the grid axes.
 
