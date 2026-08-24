@@ -13,6 +13,7 @@
 //  limitations under the License.
 
 #include <gtest/gtest.h>
+#include <cmath>
 #include <memory>
 #include <vector>
 #include "rclcpp/rclcpp.hpp"
@@ -35,6 +36,8 @@ public:
   }
 
   bool uwithinLimits(const int & cx, const int & cy) {return withinLimits(cx, cy);}
+
+  double ugetTraversalCost(const int & cx, const int & cy) {return getTraversalCost(cx, cy);}
 
   bool uisGoal(const tree_node & this_node) {return isGoal(this_node);}
 
@@ -110,7 +113,7 @@ TEST(ThetaStarTest, test_theta_star) {
 
   /// Check if the isSafe functions work properly
   EXPECT_TRUE(planner_->isSafe(5, 5));         // cost at this point is 0
-  EXPECT_FALSE(planner_->isSafe(10, 10));      // cost at this point is 253 (>LETHAL_COST)
+  EXPECT_FALSE(planner_->isSafe(10, 10));      // cost at this point is 253 (>MAX_NON_OBSTACLE_COST)
 
   /// Check if the functions addIndex & getIndex work properly
   coordsM c = {18, 18};
@@ -228,6 +231,113 @@ TEST(ThetaStarPlanner, test_theta_star_reconfigure)
   rclcpp::spin_until_future_complete(
     life_node->get_node_base_interface(),
     results);
+}
+
+/// The traversal cost is charged per unit distance, so two straight lines of equal metric length
+/// accrue equal cost whatever their bearing. Charging once per visited cell instead makes a
+/// 45-degree line about 29% cheaper per metre than an axial one of the same length.
+TEST(ThetaStarTest, test_los_cost_is_direction_independent) {
+  auto planner_ = std::make_unique<test_theta_star>();
+  /// A uniform costmap: every cell has the same cost density, so the cost of a line is exactly
+  /// proportional to its length and any residual bearing dependence is the defect under test.
+  planner_->costmap_ = new nav2_costmap_2d::Costmap2D(120, 120, 1.0, 0.0, 0.0, 100);
+  planner_->w_traversal_cost_ = 2.0;
+
+  const int kLength = 100;
+  double axial_cost = 0.0, diagonal_cost = 0.0;
+  ASSERT_TRUE(planner_->ulosCheck(5, 5, 5 + kLength, 5, axial_cost));
+  ASSERT_TRUE(planner_->ulosCheck(5, 5, 5 + kLength, 5 + kLength, diagonal_cost));
+
+  EXPECT_NEAR(
+    axial_cost / kLength,
+    diagonal_cost / std::hypot(kLength, kLength),
+    1e-9);
+
+  delete planner_->costmap_;
+}
+
+/// Each expansion step is charged by its metric length, so on a uniform costmap the planner
+/// reaches an off-axis goal by a straight path rather than one bowed towards the grid diagonals.
+TEST(ThetaStarTest, test_path_does_not_bow_on_uniform_costmap) {
+  auto planner_ = std::make_unique<test_theta_star>();
+  planner_->costmap_ = new nav2_costmap_2d::Costmap2D(200, 200, 1.0, 0.0, 0.0, 100);
+  planner_->w_euc_cost_ = 1.0;
+  planner_->w_traversal_cost_ = 2.0;
+  planner_->w_heuristic_cost_ = 1.0;
+  planner_->how_many_corners_ = 8;
+
+  /// An off-grid bearing, so neither the axial nor the diagonal step is favoured outright.
+  geometry_msgs::msg::PoseStamped start, goal;
+  start.pose.position.x = 10;
+  start.pose.position.y = 10;
+  start.pose.orientation.w = 1.0;
+  goal.pose.position.x = 190;
+  goal.pose.position.y = 120;
+  goal.pose.orientation.w = 1.0;
+  planner_->setStartAndGoal(start, goal);
+
+  std::vector<coordsW> path;
+  ASSERT_TRUE(planner_->runAlgo(path));
+  ASSERT_GE(static_cast<int>(path.size()), 2);
+
+  double length = 0.0;
+  for (size_t i = 1; i < path.size(); i++) {
+    length += std::hypot(path[i].x - path[i - 1].x, path[i].y - path[i - 1].y);
+  }
+  const double chord = std::hypot(
+    path.back().x - path.front().x, path.back().y - path.front().y);
+  /// A path bowed towards the diagonals is measurably longer than its own chord.
+  EXPECT_LT(length / chord, 1.001);
+
+  delete planner_->costmap_;
+}
+
+/// Free space carries no traversal cost, so the traversal term contributes nothing to a line
+/// that crosses only free cells and the cost of such a line is charged solely by w_euc_cost.
+TEST(ThetaStarTest, test_free_space_carries_no_traversal_cost) {
+  auto planner_ = std::make_unique<test_theta_star>();
+  planner_->costmap_ = new nav2_costmap_2d::Costmap2D(120, 120, 1.0, 0.0, 0.0, 0);
+  planner_->w_traversal_cost_ = 2.0;
+
+  double sl_cost = 0.0;
+  ASSERT_TRUE(planner_->ulosCheck(5, 5, 105, 5, sl_cost));
+  EXPECT_DOUBLE_EQ(sl_cost, 0.0);
+
+  /// A uniform non-free cost is still charged at its analytic density per unit distance.
+  for (int i = 0; i < 120; i++) {
+    for (int j = 0; j < 120; j++) {
+      planner_->costmap_->setCost(i, j, 126);
+    }
+  }
+  ASSERT_TRUE(planner_->ulosCheck(5, 5, 105, 5, sl_cost));
+  EXPECT_NEAR(sl_cost / 100.0, 2.0 * (126.0 / 252.0) * (126.0 / 252.0), 1e-9);
+
+  delete planner_->costmap_;
+}
+
+/// An unknown cell is charged as near-lethal by both cost sites. Reading the raw costmap value
+/// at one site and the clamped value at the other made the same cell cost different amounts
+/// depending on whether it was reached by an expansion step or crossed by a line-of-sight check.
+TEST(ThetaStarTest, test_unknown_cost_agrees_between_cost_sites) {
+  auto planner_ = std::make_unique<test_theta_star>();
+  planner_->costmap_ = new nav2_costmap_2d::Costmap2D(120, 120, 1.0, 0.0, 0.0, UNKNOWN_COST);
+  planner_->w_traversal_cost_ = 2.0;
+  planner_->allow_unknown_ = true;
+
+  /// The per-cell charge the line-of-sight check makes, recovered per unit distance.
+  double sl_cost = 0.0;
+  ASSERT_TRUE(planner_->ulosCheck(5, 5, 105, 5, sl_cost));
+  const double los_charge = sl_cost / 100.0;
+
+  /// and the charge an expansion step makes for the same cell.
+  const double step_charge = planner_->ugetTraversalCost(50, 50);
+
+  EXPECT_NEAR(los_charge, step_charge, 1e-9);
+  /// both being the near-lethal value, not the raw UNKNOWN_COST of 255
+  const double expected = 2.0 * ((OCCUPIED_COST - 1) / 252.0) * ((OCCUPIED_COST - 1) / 252.0);
+  EXPECT_NEAR(step_charge, expected, 1e-9);
+
+  delete planner_->costmap_;
 }
 
 int main(int argc, char **argv)
