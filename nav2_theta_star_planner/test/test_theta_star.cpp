@@ -312,6 +312,46 @@ TEST(ThetaStarTest, test_los_cost_is_direction_independent) {
   delete planner_->costmap_;
 }
 
+/// Free space carries no traversal cost, so the traversal term contributes nothing to a line
+/// that crosses only free cells, and the cost of such a line is charged solely by w_euc_cost.
+/// The safety cutoff also becomes consistent: both isSafe overloads then admit exactly the same
+/// set of cells, where the 26 + 0.9 remap made the line-of-sight one stop a cost level earlier.
+TEST(ThetaStarTest, test_free_space_carries_no_traversal_cost) {
+  auto node = std::make_shared<nav2::LifecycleNode>("ThetaStarFreeSpaceTestNode");
+  auto plugin_name = std::string("test");
+  auto param_handler = std::make_unique<nav2_theta_star_planner::ParameterHandler>(
+    node, plugin_name, node->get_logger());
+  param_handler->activate();
+  auto params = param_handler->getParams();
+  auto planner_ = std::make_unique<test_theta_star>(params);
+
+  planner_->costmap_ = new nav2_costmap_2d::Costmap2D(10, 10, 1.0, 0.0, 0.0, 0);
+  params->w_traversal_cost = 2.0;
+
+  const int len = 8;
+  double sl_cost = 0.0;
+  ASSERT_TRUE(planner_->ulosCheck(1, 1, 1 + len, 1, sl_cost));
+  EXPECT_DOUBLE_EQ(sl_cost, 0.0);
+
+  // a uniform non-free cost is charged at its analytic density per unit distance
+  for (int i = 0; i < 10; i++) {
+    for (int j = 0; j < 10; j++) {
+      planner_->costmap_->setCost(i, j, 126);
+    }
+  }
+  sl_cost = 0.0;
+  ASSERT_TRUE(planner_->ulosCheck(1, 1, 1 + len, 1, sl_cost));
+  EXPECT_NEAR(sl_cost / len, 2.0 * (126.0 / 252.0) * (126.0 / 252.0), 1e-9);
+
+  // a cell at the highest non-obstacle cost is crossed by a line of sight, as isSafe admits it
+  planner_->costmap_->setCost(5, 1, MAX_NON_OBSTACLE_COST);
+  EXPECT_TRUE(planner_->isSafe(5, 1));
+  sl_cost = 0.0;
+  EXPECT_TRUE(planner_->ulosCheck(1, 1, 1 + len, 1, sl_cost));
+
+  delete planner_->costmap_;
+}
+
 int main(int argc, char ** argv)
 {
   ::testing::InitGoogleTest(&argc, argv);

@@ -51,6 +51,9 @@ integral: a cell the line clips but the trace steps past is not charged.
 Both terms are charged per unit distance, so neither depends on the direction of travel
 relative to the grid axes.
 
+Free space (a costmap cost of 0) carries no traversal cost at all, so the length of a path
+through it is charged solely through the euclidean term.
+
 ## Parameters
 The parameters of the planner are :
 - ` .how_many_corners ` : to choose between 4-connected and 8-connected graph expansions, the accepted values are 4 and 8
