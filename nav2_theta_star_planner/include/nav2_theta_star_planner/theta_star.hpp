@@ -188,20 +188,19 @@ protected:
   void backtrace(std::vector<coordsW> & raw_points, const tree_node * curr_n) const;
 
   /**
-   * @brief this function scales the costmap cost by shifting the origin to 25 and then multiply
-   *           the actual costmap cost by 0.9 to keep the output in the range of [25, 255)
-   *           an unknown cell is charged as near-obstacle, so that traversing one is discouraged
+   * @brief the traversal cost density of a cell, in raw costmap units
+   *           unknown cells are charged as near-obstacle, so that traversing them is discouraged
    *           wherever allow_unknown permits it at all
-   * @return the scaled cost thus obtained
+   * @return the cost density thus obtained
    */
   inline double getCost(const unsigned char & cost) const
   {
-    return 26 + 0.9 * (cost == UNKNOWN_COST ? OCCUPIED_COST - 1 : cost);
+    return cost == UNKNOWN_COST ? OCCUPIED_COST - 1 : cost;
   }
 
   /**
-   * @brief this function scales the cost of the cell at the point(cx, cy)
-   * @return the scaled cost thus obtained
+   * @brief the traversal cost density of the cell at the point(cx, cy)
+   * @return the cost density thus obtained
    */
   inline double getCost(const int & cx, const int & cy) const
   {
