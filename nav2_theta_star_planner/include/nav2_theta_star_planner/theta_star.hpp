@@ -106,7 +106,8 @@ public:
   }
 
   /**
-   * @brief Clear Start
+   * @brief clears the start cell, so that a robot standing in an obstacle can plan its way out
+   *           it reads the start set by setStartAndGoal(), and so must be called after it
    */
   void clearStart();
 
