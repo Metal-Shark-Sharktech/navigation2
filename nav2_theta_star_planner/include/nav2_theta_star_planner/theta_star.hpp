@@ -208,26 +208,54 @@ protected:
   }
 
   /**
-   * @brief the traversal cost of a step of the given length across a cell of the given cost,
-   *                    <parameter>*(<actual_traversal_cost_from_costmap>)^2/(<max_cost>)^2*<length>
-   *           the squared term is a cost per unit distance, so it is charged over the step
-   * @return the traversal cost thus calculated
+   * @brief for a cell of the given cost, its normalized traversal cost is calculated by
+   *                    (<actual_traversal_cost_from_costmap>)^2/(<max_cost>)^2
+   *           it is a cost per unit distance, and becomes a cost once charged over one
+   * @return the normalized cost thus calculated
    */
-  inline double getTraversalCost(const unsigned char & cost, const double & length) const
+  inline double getNormalizedCost(const unsigned char & cost) const
   {
     const double curr_cost = getCost(cost);
-    return params_->w_traversal_cost * curr_cost * curr_cost / MAX_NON_OBSTACLE_COST /
-           MAX_NON_OBSTACLE_COST * length;
+    return curr_cost * curr_cost / MAX_NON_OBSTACLE_COST / MAX_NON_OBSTACLE_COST;
   }
 
   /**
-   * @brief for the point(cx, cy), its traversal cost density is calculated by
-   *                    <parameter>*(<actual_traversal_cost_from_costmap>)^2/(<max_cost>)^2
-   * @return the traversal cost density thus calculated
+   * @brief the normalized traversal cost of the cell at the point(cx, cy)
+   * @return the normalized cost thus calculated
    */
-  inline double getTraversalCost(const int & cx, const int & cy) const
+  inline double getNormalizedCost(const int & cx, const int & cy) const
   {
-    return getTraversalCost(costmap_->getCost(cx, cy), 1.0);
+    return getNormalizedCost(costmap_->getCost(cx, cy));
+  }
+
+  /**
+   * @brief calculates the traversal cost of a step of the given length between two cells of the
+   *          given costs by
+   *                    <traversal_cost_parameter>*<mean normalized cost of the two cells>*<length>
+   *
+   *           A step crosses half of its length in each of its two cells, so each cell is
+   *           charged for half of it. Reading one cell alone charges the whole step at that
+   *           cell's cost, which makes the step cost depend on the direction of travel. The
+   *           normalized cost is quadratic in the costmap cost, so the two are averaged after
+   *           being squared and not before.
+   * @return the traversal cost thus calculated
+   */
+  inline double getTraversalCost(
+    const unsigned char & cost_a, const unsigned char & cost_b, const double & length) const
+  {
+    return params_->w_traversal_cost * 0.5 *
+           (getNormalizedCost(cost_a) + getNormalizedCost(cost_b)) * length;
+  }
+
+  /**
+   * @brief the traversal cost of the step from (ax, ay) to (bx, by)
+   * @return the traversal cost thus calculated
+   */
+  inline double getTraversalCost(
+    const int & ax, const int & ay, const int & bx, const int & by) const
+  {
+    return getTraversalCost(
+      costmap_->getCost(ax, ay), costmap_->getCost(bx, by), std::hypot(ax - bx, ay - by));
   }
 
   /**

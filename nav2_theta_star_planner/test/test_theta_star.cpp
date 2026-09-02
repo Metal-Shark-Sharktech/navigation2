@@ -39,7 +39,12 @@ public:
 
   bool uwithinLimits(const int & cx, const int & cy) {return withinLimits(cx, cy);}
 
-  double ugetTraversalCost(const int & cx, const int & cy) {return getTraversalCost(cx, cy);}
+  double ugetNormalizedCost(const int & cx, const int & cy) {return getNormalizedCost(cx, cy);}
+
+  double ugetTraversalCost(const int & ax, const int & ay, const int & bx, const int & by)
+  {
+    return getTraversalCost(ax, ay, bx, by);
+  }
 
   bool uisGoal(const tree_node & this_node) {return isGoal(this_node);}
 
@@ -277,11 +282,11 @@ TEST(ThetaStarTest, test_unknown_cost_agrees_between_cost_sites) {
   // test if a line of sight check charges an unknown cell as an expansion step does
   double sl_cost = 0.0;
   ASSERT_TRUE(planner_->ulosCheck(0, 0, 1, 0, sl_cost));
-  EXPECT_DOUBLE_EQ(sl_cost, planner_->ugetTraversalCost(0, 0));
+  EXPECT_DOUBLE_EQ(sl_cost, planner_->ugetTraversalCost(0, 0, 1, 0));
 
   // test if that charge is the one for a near-obstacle cell
   planner_->costmap_->setCost(1, 0, OCCUPIED_COST - 1);
-  EXPECT_DOUBLE_EQ(planner_->ugetTraversalCost(0, 0), planner_->ugetTraversalCost(1, 0));
+  EXPECT_DOUBLE_EQ(planner_->ugetNormalizedCost(0, 0), planner_->ugetNormalizedCost(1, 0));
 
   delete planner_->costmap_;
 }
@@ -314,8 +319,8 @@ TEST(ThetaStarTest, test_los_cost_is_direction_independent) {
 
 /// Free space carries no traversal cost, so the traversal term contributes nothing to a line
 /// that crosses only free cells, and the cost of such a line is charged solely by w_euc_cost.
-/// The safety cutoff also becomes consistent: both isSafe overloads then admit exactly the same
-/// set of cells, where the 26 + 0.9 remap made the line-of-sight one stop a cost level earlier.
+/// The safety cutoff also becomes consistent: the line-of-sight check admits exactly the same
+/// set of cells as isSafe, where the 26 + 0.9 remap made it stop a cost level earlier.
 TEST(ThetaStarTest, test_free_space_carries_no_traversal_cost) {
   auto node = std::make_shared<nav2::LifecycleNode>("ThetaStarFreeSpaceTestNode");
   auto plugin_name = std::string("test");
@@ -348,6 +353,75 @@ TEST(ThetaStarTest, test_free_space_carries_no_traversal_cost) {
   EXPECT_TRUE(planner_->isSafe(5, 1));
   sl_cost = 0.0;
   EXPECT_TRUE(planner_->ulosCheck(1, 1, 1 + len, 1, sl_cost));
+
+  delete planner_->costmap_;
+}
+
+/// A step is charged by both of its ends, so it costs the same in either direction and its cost
+/// scales with its length. Reading only the destination cell charged the whole step at one cell's
+/// cost, which made the same pair of cells cost different amounts depending on which one the
+/// search reached first.
+TEST(ThetaStarTest, test_step_traversal_cost_is_symmetric) {
+  auto node = std::make_shared<nav2::LifecycleNode>("ThetaStarSymmetryTestNode");
+  auto plugin_name = std::string("test");
+  auto param_handler = std::make_unique<nav2_theta_star_planner::ParameterHandler>(
+    node, plugin_name, node->get_logger());
+  param_handler->activate();
+  auto params = param_handler->getParams();
+  auto planner_ = std::make_unique<test_theta_star>(params);
+
+  planner_->costmap_ = new nav2_costmap_2d::Costmap2D(50, 50, 1.0, 0.0, 0.0, 100);
+  params->w_traversal_cost = 2.0;
+
+  /// A step between two cells of markedly different cost, where the endpoint convention shows.
+  planner_->costmap_->setCost(11, 10, 200);
+  const double forward = planner_->ugetTraversalCost(10, 10, 11, 10);
+  EXPECT_DOUBLE_EQ(forward, planner_->ugetTraversalCost(11, 10, 10, 10));
+
+  /// and it is the mean of the two cells' normalized costs, not either one of them alone.
+  const double lo = planner_->ugetNormalizedCost(10, 10);
+  const double hi = planner_->ugetNormalizedCost(11, 10);
+  EXPECT_NEAR(forward, params->w_traversal_cost * 0.5 * (lo + hi), 1e-9);
+  EXPECT_GT(forward, params->w_traversal_cost * lo);
+  EXPECT_LT(forward, params->w_traversal_cost * hi);
+
+  /// Over uniform cost the mean is that cost, charged over the length of the step.
+  const double axial = planner_->ugetTraversalCost(20, 20, 21, 20);
+  EXPECT_NEAR(axial, params->w_traversal_cost * planner_->ugetNormalizedCost(20, 20), 1e-9);
+  EXPECT_NEAR(planner_->ugetTraversalCost(20, 20, 21, 21), M_SQRT2 * axial, 1e-9);
+
+  delete planner_->costmap_;
+}
+
+/// The line-of-sight check charges both ends of every step it takes, so the far end of the line
+/// is charged. Charging only the near end left the last cell of a line free, and disagreed with
+/// the expansion step, which charged its destination.
+TEST(ThetaStarTest, test_los_charges_both_ends_of_the_line) {
+  auto node = std::make_shared<nav2::LifecycleNode>("ThetaStarLosEndpointTestNode");
+  auto plugin_name = std::string("test");
+  auto param_handler = std::make_unique<nav2_theta_star_planner::ParameterHandler>(
+    node, plugin_name, node->get_logger());
+  param_handler->activate();
+  auto params = param_handler->getParams();
+  auto planner_ = std::make_unique<test_theta_star>(params);
+
+  /// Free everywhere but the far end of the line, so the far cell is the only thing to charge.
+  planner_->costmap_ = new nav2_costmap_2d::Costmap2D(50, 50, 1.0, 0.0, 0.0, 0);
+  params->w_traversal_cost = 2.0;
+  planner_->costmap_->setCost(9, 5, 200);
+
+  double forward = 0.0;
+  ASSERT_TRUE(planner_->ulosCheck(5, 5, 9, 5, forward));
+
+  /// It is charged for its half of the last step, and for nothing else.
+  EXPECT_NEAR(
+    forward, params->w_traversal_cost * 0.5 * planner_->ugetNormalizedCost(9, 5), 1e-9);
+
+  /// An axial line crosses the same cells in either direction, so it now costs the same either
+  /// way; charging one end alone made it depend on which end the check started from.
+  double backward = 0.0;
+  ASSERT_TRUE(planner_->ulosCheck(9, 5, 5, 5, backward));
+  EXPECT_NEAR(forward, backward, 1e-9);
 
   delete planner_->costmap_;
 }
