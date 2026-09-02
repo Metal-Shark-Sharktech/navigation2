@@ -48,7 +48,9 @@ bool ThetaStar::generatePath(std::vector<coordsW> & raw_path, std::function<bool
 {
   resetContainers();
   addToNodesData(index_generated_);
-  double src_g_cost = getTraversalCost(src_.x, src_.y), src_h_cost = getHCost(src_.x, src_.y);
+  // The start cell is charged as half of the first step, like every other cell, so the root
+  // carries no cost of its own.
+  double src_g_cost = 0.0, src_h_cost = getHCost(src_.x, src_.y);
   nodes_data_[index_generated_] =
   {src_.x, src_.y, src_g_cost, src_h_cost, &nodes_data_[index_generated_], true,
     src_g_cost + src_h_cost};
@@ -105,6 +107,7 @@ void ThetaStar::setNeighbors(const tree_node * curr_data)
   int mx, my;
   tree_node * m_id = nullptr;
   double g_cost, h_cost, cal_cost;
+  const unsigned char curr_cost = costmap_->getCost(curr_data->x, curr_data->y);
 
   for (int i = 0; i < params_->how_many_corners; i++) {
     mx = curr_data->x + moves[i].x;
@@ -119,9 +122,9 @@ void ThetaStar::setNeighbors(const tree_node * curr_data)
       continue;
     }
 
-    // the cell arrived at is charged for the step; the one departed from is already in g
     const double step_length = (moves[i].x != 0 && moves[i].y != 0) ? M_SQRT2 : 1.0;
-    g_cost = curr_data->g + getEuclideanCost(step_length) + getTraversalCost(cost, step_length);
+    g_cost = curr_data->g + getEuclideanCost(step_length) +
+      getTraversalCost(curr_cost, cost, step_length);
 
     m_id = getIndex(mx, my);
 
@@ -181,31 +184,41 @@ bool ThetaStar::losCheck(
   int dy = abs(y1 - y0), sy = (y0 < y1) ? 1 : -1;
   int cx = x0, cy = y0, e = dx - dy;
   double stepped_length = 0.0;
+  unsigned char cost = costmap_->getCost(cx, cy);
 
   while (cx != x1 || cy != y1) {
-    const unsigned char cost = costmap_->getCost(cx, cy);
     if (!isSafe(cost)) {
       return false;
     }
+
     const int e2 = 2 * e;
     const bool diagonal = e2 > -dy && e2 <= dx;
-    const double step_length = diagonal ? M_SQRT2 : 1.0;
-    sl_cost += getTraversalCost(cost, step_length);
-    stepped_length += step_length;
+    int nx = cx, ny = cy;
+
     if (diagonal) {
       if (!isSafe(cx + sx, cy) || !isSafe(cx, cy + sy)) {
         return false;
       }
-      cx += sx;
-      cy += sy;
+      nx = cx + sx;
+      ny = cy + sy;
       e += dx - dy;
     } else if (e2 > -dy) {
-      cx += sx;
+      nx = cx + sx;
       e -= dy;
     } else {
-      cy += sy;
+      ny = cy + sy;
       e += dx;
     }
+
+    // Charged by both of the step's ends, as an expansion step is, so that the far end of the
+    // line is charged and the two cost sites agree about which cells a step is charged for.
+    const unsigned char next_cost = costmap_->getCost(nx, ny);
+    const double step_length = diagonal ? M_SQRT2 : 1.0;
+    sl_cost += getTraversalCost(cost, next_cost, step_length);
+    stepped_length += step_length;
+    cx = nx;
+    cy = ny;
+    cost = next_cost;
   }
 
   // The steps sum to the staircase length rather than the length of the line, so normalize the
