@@ -184,7 +184,7 @@ protected:
    * @param cost denotes the total straight line traversal cost; it adds the traversal cost for the node (cx, cy) at every instance; it is also being returned
    * @return false if the traversal cost is greater than the MAX_NON_OBSTACLE_COST and true otherwise
    */
-  bool isSafe(const int & cx, const int & cy, double & cost) const
+  bool isSafe(const int & cx, const int & cy, double & cost, int & n_charges) const
   {
     const double curr_cost = getCost(cx, cy);
     if ((costmap_->getCost(cx, cy) == UNKNOWN_COST && params_->allow_unknown) ||
@@ -192,6 +192,7 @@ protected:
     {
       cost += params_->w_traversal_cost * curr_cost * curr_cost / MAX_NON_OBSTACLE_COST /
         MAX_NON_OBSTACLE_COST;
+      n_charges++;
       return true;
     } else {
       return false;
@@ -199,16 +200,15 @@ protected:
   }
 
   /**
-   * @brief this function scales the costmap cost by shifting the origin to 25 and then multiply
-   *           the actual costmap cost by 0.9 to keep the output in the range of [25, 255)
-   *           an unknown cell is charged as near-obstacle, so that traversing one is discouraged
-   *           wherever allow_unknown permits it at all
-   * @return the scaled cost thus obtained
+   * @brief the traversal cost density of a cell, in raw costmap units.
+   *           An unknown cell is charged as near-obstacle, so that traversing one is
+   *           discouraged wherever allow_unknown permits it at all.
+   * @return the cost density thus obtained
    */
   inline double getCost(const int & cx, const int & cy) const
   {
     const unsigned char cost = costmap_->getCost(cx, cy);
-    return 26 + 0.9 * (cost == UNKNOWN_COST ? OCCUPIED_COST - 1 : cost);
+    return cost == UNKNOWN_COST ? OCCUPIED_COST - 1 : cost;
   }
 
   /**

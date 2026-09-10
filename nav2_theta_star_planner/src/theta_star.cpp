@@ -12,6 +12,7 @@
 //  See the License for the specific language governing permissions and
 //  limitations under the License.
 
+#include <cmath>
 #include <functional>
 #include <vector>
 
@@ -118,8 +119,12 @@ void ThetaStar::setNeighbors(const tree_node * curr_data)
       continue;
     }
 
-    g_cost = curr_data->g + getEuclideanCost(curr_data->x, curr_data->y, mx, my) +
-      getTraversalCost(mx, my);
+    // The traversal term is a cost density, so charge it over the distance actually
+    // covered. moves[0..3] are axial (length 1), moves[4..7] diagonal (length sqrt(2)).
+    // getEuclideanCost() over a single step is w_euc_cost * step_length, so the two
+    // terms factor.
+    const double step_length = i < 4 ? 1.0 : M_SQRT2;
+    g_cost = curr_data->g + (params_->w_euc_cost + getTraversalCost(mx, my)) * step_length;
 
     m_id = getIndex(mx, my);
 
@@ -178,9 +183,10 @@ bool ThetaStar::losCheck(
   int dx = abs(x1 - x0), sx = (x0 < x1) ? 1 : -1;
   int dy = abs(y1 - y0), sy = (y0 < y1) ? 1 : -1;
   int cx = x0, cy = y0, e = dx - dy;
+  int n_charges = 0;
 
   while (cx != x1 || cy != y1) {
-    if (!isSafe(cx, cy, sl_cost)) {
+    if (!isSafe(cx, cy, sl_cost, n_charges)) {
       return false;
     }
     int e2 = 2 * e;
@@ -198,6 +204,14 @@ bool ThetaStar::losCheck(
       cy += sy;
       e += dx;
     }
+  }
+
+  // Bresenham charges once per cell visited, which sums to the length of the staircase
+  // rather than the length of the line. Normalise to the line so the traversal term is
+  // charged over the same distance as the euclidean term, and does not depend on the
+  // direction of travel.
+  if (n_charges > 0) {
+    sl_cost *= std::hypot(dx, dy) / n_charges;
   }
 
   return true;
